@@ -1,287 +1,172 @@
-// app/(dashboard)/layout.tsx
 "use client"
 
 import { useState, useEffect, type ReactNode } from "react"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import Link from "next/link"
-import { Home, Briefcase, FileText, Settings, Menu, X, ChevronLeft, ChevronRight, User, BookOpen, Sparkles, Mic, Trophy, Bell, Calendar, Bot, Boxes } from "lucide-react"
+import {
+  Home,
+  Briefcase,
+  FileText,
+  User,
+  Menu,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  LogOut,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
-import { LanguageSelector } from "@/components/ui/language-selector"
-import { NotificationBell } from "@/components/notifications/NotificationBell"
-import { NotificationToastProvider } from "@/components/notifications"
-import { useLanguage } from "@/components/providers/language-provider"
 import { cn } from "@/lib/utils"
 import { logout } from "@/lib/auth"
-import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase/client"
-import { getMyAccess } from "@/lib/actions/rbac.action"
 
-const navigationItems = [
-  { key: "nav.dashboard", href: "/dashboard", icon: Home },
-  { key: "nav.jobs", href: "/dashboard/jobs", icon: Briefcase },
-  { key: "nav.coverLetters", href: "/dashboard/letters", icon: FileText },
-  { key: "nav.studyRoom", href: "/dashboard/study", icon: BookOpen },
-  { key: "nav.trainingRoom", href: "/dashboard/training", icon: Mic },
-  { key: "nav.calendar", href: "/dashboard/calendar", icon: Calendar },
-  { key: "nav.community", href: "/dashboard/community/hub", icon: Trophy },
-  { key: "nav.notifications", href: "/dashboard/notifications", icon: Bell },
-  { key: "nav.contentGen", href: "/dashboard/admin/study-content", icon: Sparkles, requiresAdmin: true },
-  { key: "nav.mentorKyc", href: "/dashboard/admin/mentor-kyc", icon: Sparkles, requiresAdmin: true },
-  { key: "nav.aiMasters", href: "/dashboard/admin/masters", icon: Bot, requiresAdmin: true, label: "AI Masters" },
-  { key: "nav.aiKits", href: "/dashboard/admin/kits", icon: Boxes, requiresAdmin: true, label: "AI Kits" },
-  { key: "nav.settings", href: "/dashboard/settings", icon: Settings },
+const navItems = [
+  { label: "Dashboard", href: "/dashboard", icon: Home },
+  { label: "Profile", href: "/dashboard/profile", icon: User },
+  { label: "Jobs", href: "/dashboard/jobs", icon: Briefcase },
+  { label: "Cover Letters", href: "/dashboard/letters", icon: FileText },
 ]
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: ReactNode
-}) {
+export default function DashboardLayout({ children }: { children: ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [isCollapsed, setIsCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
+  const [userEmail, setUserEmail] = useState("")
   const pathname = usePathname()
-  const router = useRouter();
-  const [session, setSession] = useState<any>()
-  const [isAdmin, setIsAdmin] = useState(false)
-  const { t } = useLanguage()
+  const router = useRouter()
 
-  const fetchSession = async () => {
-    const { data: { session } } = await supabase.auth.getSession()
-    setSession(session)
-
-    const accessRes = await getMyAccess()
-    setIsAdmin(Boolean(accessRes.data?.isAdmin))
-  }
-  
-  // Close mobile sidebar when route changes
   useEffect(() => {
     setSidebarOpen(false)
-    fetchSession()
-
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUserEmail(session?.user?.email ?? "")
+    })
   }, [pathname])
 
-  const getPageTitle = (path: string): string => {
-    if (path === "/dashboard/admin") {
-      return "Admin Dashboard";
-    }
-    if (path.startsWith("/dashboard/community")) {
-      return t("nav.community");
-    }
-    // First try to find a matching navigation item (prefer most specific)
-    const navItem = navigationItems
-      .filter((item) => path.startsWith(item.href))
-      .sort((a, b) => b.href.length - a.href.length)[0];
-    if (navItem) return t(navItem.key);
+  const handleLogout = async () => {
+    await logout()
+    router.push("/login")
+  }
 
-    // If no match, try to derive from URL
-    const lastSegment = path.split('/').pop() || '';
-    if (lastSegment) {
-      return lastSegment.charAt(0).toUpperCase() + lastSegment.slice(1);
-    }
-
-    console.log(lastSegment);
-    
-
-    // Fallback
-    return "Dashboard";
-  };
-
-  const renderNavItem = (item: any) => {
-    const resolvedHref = item.key === "nav.dashboard" && isAdmin ? "/dashboard/admin" : item.href;
-
-    const isActive =
-      item.key === "nav.community"
-        ? pathname.startsWith("/dashboard/community")
-        : item.key === "nav.dashboard"
-          ? pathname === "/dashboard" || pathname === "/dashboard/admin"
-          : pathname === item.href ||
-            (item.href !== "/dashboard" && pathname.startsWith(`${item.href}/`));
-
-    const label = item.label ?? t(item.key)
-
-    return (
-      <Link
-        key={item.key}
-        href={resolvedHref}
-        className={cn(
-          "group flex items-center rounded-md p-2 text-sm font-medium",
-          isActive
-            ? "bg-primary/5 text-primary/70 dark:bg-primary/15 dark:text-primary/60"
-            : "text-gray-700 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-slate-700 dark:hover:text-white",
-          isCollapsed ? "justify-center" : "px-3"
-        )}
-        title={isCollapsed ? t(item.key) : undefined}
-      >
-        <item.icon
-          className={cn(
-            "h-5 w-5 shrink-0",
-            isActive
-              ? "text-primary/70 dark:text-primary/60"
-              : "text-gray-400 group-hover:text-gray-500 dark:text-gray-400"
-          )}
-        />
-        {!isCollapsed && (
-          <span className="ml-3">{label}</span>
-        )}
-      </Link>
-    )
+  const getPageTitle = () => {
+    const match = navItems
+      .filter((item) => pathname.startsWith(item.href))
+      .sort((a, b) => b.href.length - a.href.length)[0]
+    return match?.label ?? "Dashboard"
   }
 
   return (
-    <NotificationToastProvider>
-      <div className="flex h-screen bg-gray-50 dark:bg-slate-900">
-        {/* Mobile sidebar backdrop */}
-        <div
-          className={cn(
-            "fixed inset-0 z-40 bg-black/50 transition-opacity lg:hidden",
-            !sidebarOpen && "pointer-events-none opacity-0"
+    <div className="flex h-screen bg-muted/40">
+      {/* Mobile backdrop */}
+      <div
+        className={cn(
+          "fixed inset-0 z-40 bg-background/80 backdrop-blur-sm transition-opacity lg:hidden",
+          sidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"
+        )}
+        onClick={() => setSidebarOpen(false)}
+      />
+
+      {/* Sidebar */}
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 flex h-full flex-col border-r border-border bg-card transition-all duration-200",
+          collapsed ? "w-16" : "w-60",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+        )}
+      >
+        {/* Logo */}
+        <div className="flex h-14 items-center justify-between border-b border-border px-3">
+          {!collapsed && (
+            <Link href="/dashboard" className="text-lg font-bold text-primary">
+              JobPilot
+            </Link>
           )}
-          onClick={() => setSidebarOpen(false)}
-        />
-
-        {/* Sidebar */}
-        <aside
-          className={cn(
-            "fixed inset-y-0 left-0 z-50 flex h-full flex-col bg-white shadow-lg transition-all duration-300 ease-in-out dark:bg-slate-800",
-            isCollapsed ? "w-16" : "w-64",
-            !sidebarOpen && "-translate-x-full lg:translate-x-0"
-          )}
-        >
-          <div className="flex h-full flex-col">
-            {/* Logo and Toggle */}
-            <div className="flex h-16 items-center justify-between border-b px-4 dark:border-slate-700">
-              {!isCollapsed && (
-                <Link href={isAdmin ? "/dashboard/admin" : "/dashboard"} className="flex items-center space-x-2">
-                  <span className="text-xl font-bold text-primary/80 dark:text-primary/70">
-                    JobPilot AI
-                  </span>
-                </Link>
-              )}
-              <div className="flex items-center">
-                <button
-                  type="button"
-                  className="rounded-md p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-600 dark:text-gray-400 dark:hover:bg-slate-700"
-                  onClick={() => setIsCollapsed(!isCollapsed)}
-                >
-                  {isCollapsed ? (
-                    <ChevronRight className="h-5 w-5" />
-                  ) : (
-                    <ChevronLeft className="h-5 w-5" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-md p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-600 dark:text-gray-400 dark:hover:bg-slate-700 lg:hidden"
-                  onClick={() => setSidebarOpen(false)}
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Navigation */}
-            <nav className="flex-1 space-y-1 overflow-y-auto p-2">
-              {navigationItems
-                .filter((item: any) => !item.requiresAdmin)
-                .map(renderNavItem)}
-
-              {isAdmin && navigationItems.some((item: any) => item.requiresAdmin) ? (
-                <div className={cn(isCollapsed ? "px-0" : "px-3")}
-                  aria-hidden
-                >
-                  {isCollapsed ? (
-                    <div className="my-2 h-px bg-gray-200 dark:bg-slate-700" />
-                  ) : (
-                    <div className="my-2 px-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                      Admin Actions
-                    </div>
-                  )}
-                </div>
-              ) : null}
-
-              {isAdmin
-                ? navigationItems
-                  .filter((item: any) => item.requiresAdmin)
-                  .map(renderNavItem)
-                : null}
-            </nav>
-
-            {/* User Profile */}
-            <div className="border-t p-2 dark:border-slate-700">
-              <Link 
-                href="/dashboard/profile"
-                className={cn(
-                  "flex items-center rounded-md p-2 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors",
-                  isCollapsed ? "justify-center" : "px-2"
-                )}
-              >
-                <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary dark:bg-primary/20 dark:text-primary/90">
-                  {session?.user?.user_metadata?.full_name ? (
-                    <span className="text-sm font-medium">
-                      {session.user.user_metadata.full_name.charAt(0).toUpperCase()}
-                    </span>
-                  ) : (
-                    <User className="h-4 w-4" />
-                  )}
-                </div>
-                {!isCollapsed && (
-                  <div className="ml-3 overflow-hidden">
-                    <p className="truncate text-sm font-medium text-gray-700 dark:text-gray-200">
-                      {session?.user?.user_metadata?.full_name || session?.user?.email?.split('@')[0] || 'User'}
-                    </p>
-                    <p className="truncate text-xs text-gray-500 dark:text-gray-400">
-                      {t('nav.viewProfile')}
-                    </p>
-                  </div>
-                )}
-              </Link>
-            </div>
-          </div>
-        </aside>
-
-        {/* Main content */}
-        <div
-          className={cn(
-            "flex flex-1 flex-col overflow-hidden transition-all duration-300 ease-in-out",
-            isCollapsed ? "lg:ml-16" : "lg:ml-64"
-          )}
-        >
-          {/* Top navigation */}
-          <header className="flex h-16 shrink-0 items-center border-b bg-white px-4 shadow-sm dark:border-slate-700 dark:bg-slate-800 lg:px-6">
-            <button
-              type="button"
-              className="mr-4 rounded-md p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 dark:text-gray-400 dark:hover:bg-slate-700 lg:hidden"
-              onClick={() => setSidebarOpen(true)}
-            >
-              <Menu className="h-6 w-6" />
-            </button>
-            <div className="flex flex-1 justify-between">
-              <div className="flex items-center">
-                <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
-                  {getPageTitle(pathname)}
-                </h1>
-              </div>
-              <div className="flex items-center gap-3">
-                <NotificationBell />
-                <LanguageSelector variant="compact" />
-                <ThemeToggle />
-                {session ? (<Button onClick={() => {
-                  logout();
-                  router.push("/login");
-                }}>
-                  {t('common.logout')}
-                </Button>): null}
-              </div>
-            </div>
-          </header>
-
-          {/* Page content */}
-          <main className="flex-1 overflow-y-auto bg-gray-50 p-4 dark:bg-slate-900 sm:p-6 lg:p-8">
-            {children}
-          </main>
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className="hidden rounded-md p-1.5 text-muted-foreground hover:bg-accent lg:block"
+          >
+            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+          </button>
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent lg:hidden"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
+
+        {/* Nav */}
+        <nav className="flex-1 space-y-1 overflow-y-auto p-2">
+          {navItems.map((item) => {
+            const isActive =
+              item.href === "/dashboard"
+                ? pathname === "/dashboard"
+                : pathname.startsWith(item.href)
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  "flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                  collapsed && "justify-center px-0"
+                )}
+                title={collapsed ? item.label : undefined}
+              >
+                <item.icon className="h-4 w-4 shrink-0" />
+                {!collapsed && <span className="ml-3">{item.label}</span>}
+              </Link>
+            )
+          })}
+        </nav>
+
+        {/* User section */}
+        <div className="border-t border-border p-2">
+          <button
+            onClick={handleLogout}
+            className={cn(
+              "flex w-full items-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive",
+              collapsed && "justify-center px-0"
+            )}
+            title={collapsed ? "Sign out" : undefined}
+          >
+            <LogOut className="h-4 w-4 shrink-0" />
+            {!collapsed && <span className="ml-3">Sign out</span>}
+          </button>
+        </div>
+      </aside>
+
+      {/* Main */}
+      <div
+        className={cn(
+          "flex flex-1 flex-col overflow-hidden transition-all duration-200",
+          collapsed ? "lg:ml-16" : "lg:ml-60"
+        )}
+      >
+        {/* Header */}
+        <header className="flex h-14 shrink-0 items-center gap-4 border-b border-border bg-card px-4">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent lg:hidden"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <h1 className="text-lg font-semibold text-foreground">{getPageTitle()}</h1>
+          <div className="ml-auto flex items-center gap-2">
+            {userEmail && (
+              <span className="hidden text-sm text-muted-foreground md:block">
+                {userEmail}
+              </span>
+            )}
+            <ThemeToggle />
+          </div>
+        </header>
+
+        {/* Content */}
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6">
+          {children}
+        </main>
       </div>
-    </NotificationToastProvider>
+    </div>
   )
 }

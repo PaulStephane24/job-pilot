@@ -1,396 +1,373 @@
-'use server'
+"use server"
 
-import { z } from "zod";
-import { adminSupabase } from "../supabase/server";
-import { createClient } from "../supabase/server";
-import { checkRateLimit } from "../utils/rate-limit";
+import { createClient } from "@/lib/supabase/server"
+import { adminSupabase } from "@/lib/supabase/server"
 
-const ResumeSchema = z.object({
-  fileUrl: z.string().trim().url().max(2000),
-  fileName: z.string().trim().min(1).max(255),
-  fileType: z.string().trim().min(1).max(100),
-  fileSize: z.number().int().min(0).max(50 * 1024 * 1024),
-  parsedData: z.any().optional(),
-});
+interface ParsedResume {
+  firstName?: string
+  lastName?: string
+  phone?: string
+  location?: string
+  headline?: string
+  skills: string[]
+  experiences: {
+    company: string
+    position: string
+    location?: string
+    startDate: string
+    endDate?: string
+    isCurrent: boolean
+    description?: string
+  }[]
+  educations: {
+    school: string
+    degree: string
+    field?: string
+    startDate: string
+    endDate?: string
+    isCurrent: boolean
+  }[]
+}
 
-export async function createResume(values: z.infer<typeof ResumeSchema>) {
-  try {
-    const parsed = ResumeSchema.safeParse(values);
-    if (!parsed.success) return { data: null, error: "Invalid input format" };
+function parseTextToResume(text: string): ParsedResume {
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
 
-    // Get authenticated user from server client
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+  const result: ParsedResume = { skills: [], experiences: [], educations: [] }
 
-    if (!user) return { data: null, error: "Unauthorized" };
+  // Name from first line (if short and not email/phone)
+  if (lines.length > 0) {
+    const first = lines[0]
+    if (first.length < 60 && !first.includes("@") && !/^\d/.test(first)) {
+      const parts = first.split(/\s+/)
+      result.firstName = parts[0] || undefined
+      result.lastName = parts.slice(1).join(" ") || undefined
+    }
+  }
 
-    const rate = checkRateLimit(`resume:create:${user.id}`, 10, 60_000);
-    if (!rate.allowed) return { data: null, error: "Too many requests" };
+  // Phone
+  for (const line of lines.slice(0, 12)) {
+    const m = line.match(/[\+]?[\d\s\-()]{7,15}/)
+    if (m && !result.phone) result.phone = m[0].trim()
+  }
 
-    // Ensure user exists in users table (handles case where OAuth callback didn't create it)
-    const { data: existingUser, error: userCheckError } = await adminSupabase
-      .from("users")
-      .select("id")
-      .eq("id", user.id)
-      .single();
+  // Sections
+  const sectionLabels = [
+    "skills",
+    "technical skills",
+    "technologies",
+    "competencies",
+    "experience",
+    "work experience",
+    "professional experience",
+    "employment",
+    "education",
+    "formation",
+    "projects",
+    "certifications",
+  ]
+  const isSection = (l: string) =>
+    sectionLabels.some((s) => l.toLowerCase().replace(/[:\-–]/g, "").trim().startsWith(s))
 
-    if (userCheckError || !existingUser) {
-      // Create user record first - this MUST succeed before inserting resume
-      const { error: userInsertError } = await adminSupabase.from("users").upsert({
-        id: user.id,
-        email: user.email!,
-        role: "USER",
-      }, { onConflict: "id" });
-
-      if (userInsertError) {
-        console.error("Failed to create user record:", userInsertError);
-        return { data: null, error: "Failed to create user record: " + userInsertError.message };
+  // Skills
+  let inSkills = false
+  for (const line of lines) {
+    const lower = line.toLowerCase().replace(/[:\-–]/g, "").trim()
+    if (
+      ["skills", "technical skills", "technologies", "competencies"].some(
+        (k) => lower.startsWith(k)
+      ) &&
+      lower.length < 40
+    ) {
+      inSkills = true
+      // If skills are on same line as header
+      const after = line.replace(/^[^:]+:\s*/, "")
+      if (after !== line && after.length > 2) {
+        result.skills.push(
+          ...after
+            .split(/[,;|•·]+/)
+            .map((s) => s.trim())
+            .filter((s) => s.length > 1 && s.length < 50)
+        )
       }
+      continue
+    }
+    if (inSkills && isSection(line) && !["skills", "technical skills", "technologies", "competencies"].some((k) => lower.startsWith(k))) {
+      inSkills = false
+      continue
+    }
+    if (inSkills) {
+      result.skills.push(
+        ...line
+          .split(/[,;|•·\t]+/)
+          .map((s) => s.trim())
+          .filter((s) => s.length > 1 && s.length < 50)
+      )
+    }
+  }
+  result.skills = [...new Set(result.skills)].slice(0, 30)
 
-      // Create profile record
-      const userMetadata = user.user_metadata || {};
-      const fullName = userMetadata.full_name || userMetadata.name || user.email?.split("@")[0] || "User";
-      const nameParts = fullName.trim().split(/\s+/);
-      
-      const { error: profileInsertError } = await adminSupabase.from("profiles").upsert({
-        userId: user.id,
-        firstName: nameParts[0] || "",
-        lastName: nameParts.slice(1).join(" ") || "",
-        avatarUrl: userMetadata.avatar_url || userMetadata.picture || "",
-      }, { onConflict: "userId" });
-
-      if (profileInsertError) {
-        console.error("Failed to create profile record:", profileInsertError);
-        // Don't fail here - profile is not required for resume upload
+  // Experience
+  let inExp = false
+  for (let i = 0; i < lines.length; i++) {
+    const lower = lines[i].toLowerCase().replace(/[:\-–]/g, "").trim()
+    if (
+      ["experience", "work experience", "professional experience", "employment"].some(
+        (k) => lower.startsWith(k)
+      ) &&
+      lower.length < 40
+    ) {
+      inExp = true
+      continue
+    }
+    if (
+      inExp &&
+      ["education", "formation", "skills", "certifications", "projects"].some(
+        (k) => lower.startsWith(k)
+      ) &&
+      lower.length < 40
+    ) {
+      inExp = false
+      continue
+    }
+    if (inExp) {
+      const dm = lines[i].match(
+        /(\d{4})\s*[-–—]\s*(\d{4}|present|current|aujourd|ongoing)/i
+      )
+      if (dm) {
+        const prev = i > 0 && !lines[i - 1].match(/\d{4}/) ? lines[i - 1] : lines[i]
+        const parts = prev.split(/[,\-–—|@]/)
+        result.experiences.push({
+          position: parts[0]?.trim() || "Position",
+          company: parts[1]?.trim() || prev,
+          startDate: new Date(`${dm[1]}-01-01`).toISOString(),
+          endDate: dm[2].match(/\d{4}/)
+            ? new Date(`${dm[2]}-01-01`).toISOString()
+            : undefined,
+          isCurrent: !dm[2].match(/\d{4}/),
+        })
       }
     }
+  }
 
-    // Use admin client for database operations (bypasses RLS)
+  // Education
+  let inEdu = false
+  for (let i = 0; i < lines.length; i++) {
+    const lower = lines[i].toLowerCase().replace(/[:\-–]/g, "").trim()
+    if (
+      ["education", "formation", "academic"].some((k) => lower.startsWith(k)) &&
+      lower.length < 40
+    ) {
+      inEdu = true
+      continue
+    }
+    if (
+      inEdu &&
+      ["experience", "skills", "certifications", "projects"].some(
+        (k) => lower.startsWith(k)
+      ) &&
+      lower.length < 40
+    ) {
+      inEdu = false
+      continue
+    }
+    if (inEdu) {
+      const dm = lines[i].match(
+        /(\d{4})\s*[-–—]\s*(\d{4}|present|current|aujourd|ongoing)/i
+      )
+      if (dm) {
+        const prev = i > 0 && !lines[i - 1].match(/\d{4}/) ? lines[i - 1] : lines[i]
+        const parts = prev.split(/[,\-–—|]/)
+        result.educations.push({
+          degree: parts[0]?.trim() || "Degree",
+          school: parts[1]?.trim() || prev,
+          startDate: new Date(`${dm[1]}-01-01`).toISOString(),
+          endDate: dm[2].match(/\d{4}/)
+            ? new Date(`${dm[2]}-01-01`).toISOString()
+            : undefined,
+          isCurrent: !dm[2].match(/\d{4}/),
+        })
+      }
+    }
+  }
+
+  return result
+}
+
+export async function uploadAndParseResume(formData: FormData) {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { data: null, error: "Not authenticated" }
+
+  const file = formData.get("file") as File
+  if (!file) return { data: null, error: "No file provided" }
+
+  const { type: fileType, name: fileName, size: fileSize } = file
+
+  if (fileSize > 5 * 1024 * 1024) {
+    return { data: null, error: "File too large (max 5 MB)." }
+  }
+  if (
+    fileType !== "application/pdf" &&
+    fileType !==
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ) {
+    return { data: null, error: "Only PDF and DOCX files are supported." }
+  }
+
+  try {
+    const buffer = Buffer.from(await file.arrayBuffer())
+    let extractedText = ""
+
+    if (fileType === "application/pdf") {
+      const pdfParse = (await import("pdf-parse")).default
+      const pdf = await pdfParse(buffer)
+      extractedText = pdf.text
+    } else {
+      const mammoth = await import("mammoth")
+      const { value } = await mammoth.extractRawText({ buffer })
+      extractedText = value
+    }
+
+    const parsed = parseTextToResume(extractedText)
+
+    // Upload to Supabase Storage
+    const filePath = `resumes/${user.id}/${Date.now()}-${fileName}`
+    const { error: upErr } = await adminSupabase.storage
+      .from("resumes")
+      .upload(filePath, buffer, { contentType: fileType, upsert: true })
+
+    if (upErr?.message?.includes("not found")) {
+      await adminSupabase.storage.createBucket("resumes", { public: false })
+      await adminSupabase.storage
+        .from("resumes")
+        .upload(filePath, buffer, { contentType: fileType, upsert: true })
+    }
+
+    const { data: urlData } = adminSupabase.storage
+      .from("resumes")
+      .getPublicUrl(filePath)
+    const fileUrl = urlData?.publicUrl ?? filePath
+
     // Deactivate old resumes
-    await adminSupabase.from("resumes").update({ isActive: false }).eq("userId", user.id);
+    await adminSupabase
+      .from("resumes")
+      .update({ isActive: false })
+      .eq("userId", user.id)
 
-    // Insert new resume
-    const { data, error } = await adminSupabase
+    // Insert resume record
+    const { data: resume, error: rErr } = await adminSupabase
       .from("resumes")
       .insert({
         userId: user.id,
-        ...parsed.data,
+        fileUrl,
+        fileName,
+        fileType,
+        fileSize,
         isActive: true,
+        parsedData: parsed as unknown as Record<string, unknown>,
       })
-      .select("*")
-      .single();
+      .select()
+      .single()
 
-    if (error) return { data: null, error: error.message };
+    if (rErr) return { data: null, error: rErr.message }
 
-    // Update profile resumeUrl
-    await adminSupabase
-      .from("profiles")
-      .update({ resumeUrl: parsed.data.fileUrl })
-      .eq("userId", user.id);
-
-    return { data, error: null };
-  } catch (err) {
-    console.error("Error creating resume:", err);
-    return { data: null, error: "Unexpected error creating resume" };
-  }
-}
-
-export async function listResumes() {
-  try {
-    // Get authenticated user from server client
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    if (!user) return { data: null, error: "Unauthorized" };
-
-    const { data, error } = await adminSupabase
-      .from("resumes")
-      .select("*")
-      .eq("userId", user.id)
-      .order("createdAt", { ascending: false });
-
-    if (error) return { data: null, error: error.message };
-
-    return { data, error: null };
-  } catch (err) {
-    return { data: null, error: "Unexpected error listing resumes" };
-  }
-}
-
-export async function deleteResume(id: string) {
-  try {
-    // Get authenticated user from server client
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    if (!user) return { data: null, error: "Unauthorized" };
-
-    // Verify ownership before deleting
-    const { data: resume } = await adminSupabase
-      .from("resumes")
-      .select("userId")
-      .eq("id", id)
-      .single();
-
-    if (!resume || resume.userId !== user.id) {
-      return { data: null, error: "Unauthorized" };
-    }
-
-    const { error } = await adminSupabase.from("resumes").delete().eq("id", id);
-
-    if (error) return { data: null, error: error.message };
-
-    return { data: true, error: null };
-  } catch (err) {
-    return { data: null, error: "Unexpected error deleting resume" };
-  }
-}
-
-export async function updateResumeParsedData(id: string, parsedData: any) {
-  try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-
-    if (!user) return { data: null, error: "Unauthorized" };
-
-    const safeId = typeof id === 'string' ? id.trim().slice(0, 128) : '';
-    if (!safeId) return { data: null, error: "Invalid id" };
-
-    const rate = checkRateLimit(`resume:update-parsed:${user.id}`, 30, 60_000);
-    if (!rate.allowed) return { data: null, error: "Too many requests" };
-
-    const { data: resume, error: resumeError } = await adminSupabase
-      .from("resumes")
-      .select("id,userId")
-      .eq("id", safeId)
-      .single();
-
-    if (resumeError || !resume) return { data: null, error: "Resume not found" };
-    if (resume.userId !== user.id) return { data: null, error: "Unauthorized" };
-
-    const { data, error } = await adminSupabase
-      .from("resumes")
-      .update({ parsedData })
-      .eq("id", safeId)
-      .eq("userId", user.id)
-      .select("*")
-      .single();
-
-    if (error) return { data: null, error: error.message };
-
-    return { data, error: null };
-  } catch (err) {
-    return { data: null, error: "Unexpected error updating parsed data" };
-  }
-}
-
-/**
- * Parse resume data from Affinda (or similar service) using AI
- * This transforms raw parsed data into structured profile fields
- */
-export async function parseResumeWithAI(rawAffindaData: any) {
-  try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return { data: null, error: "Unauthorized" };
-
-    const rate = checkRateLimit(`resume:parse:${user.id}`, 10, 60_000);
-    if (!rate.allowed) return { data: null, error: "Too many requests" };
-
-    const { aiService } = await import("@/lib/services/ai");
-    
-    // Parse the raw data using AI
-    const parsedData = await aiService.parseResumeData(rawAffindaData);
-    
-    return { data: parsedData, error: null };
-  } catch (err) {
-    console.error("Error parsing resume with AI:", err);
-    return { data: null, error: "Failed to parse resume data" };
-  }
-}
-
-/**
- * Parse resume and save to profile
- * This parses Affinda data and updates the user's profile with extracted information
- */
-export async function parseAndSaveResumeToProfile(resumeId: string, rawAffindaData: any) {
-  try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    if (!user) return { data: null, error: "Unauthorized" };
-
-    const safeResumeId = typeof resumeId === 'string' ? resumeId.trim().slice(0, 128) : '';
-    if (!safeResumeId) return { data: null, error: "Invalid resumeId" };
-
-    const rate = checkRateLimit(`resume:parse-save:${user.id}`, 5, 60_000);
-    if (!rate.allowed) return { data: null, error: "Too many requests" };
-
-    const { data: resume, error: resumeError } = await adminSupabase
-      .from("resumes")
-      .select("id,userId")
-      .eq("id", safeResumeId)
-      .single();
-
-    if (resumeError || !resume) return { data: null, error: "Resume not found" };
-    if (resume.userId !== user.id) return { data: null, error: "Unauthorized" };
-
-    // Import AI service dynamically to avoid circular dependencies
-    const { aiService } = await import("@/lib/services/ai");
-    
-    // Parse the raw data using AI
-    const parsedData = await aiService.parseResumeData(rawAffindaData);
-    
-    // Get the user's profile
-    const { data: profile } = await adminSupabase
+    // Get or create profile
+    let { data: profile } = await adminSupabase
       .from("profiles")
       .select("id")
       .eq("userId", user.id)
-      .single();
+      .single()
 
     if (!profile) {
-      return { data: null, error: "Profile not found" };
+      const { data: np } = await adminSupabase
+        .from("profiles")
+        .insert({ userId: user.id })
+        .select("id")
+        .single()
+      profile = np
     }
 
-    const profileId = profile.id;
+    if (profile) {
+      // Update profile fields
+      const upd: Record<string, unknown> = {
+        resumeUrl: fileUrl,
+        updatedAt: new Date().toISOString(),
+      }
+      if (parsed.firstName) upd.firstName = parsed.firstName
+      if (parsed.lastName) upd.lastName = parsed.lastName
+      if (parsed.phone) upd.phone = parsed.phone
+      if (parsed.headline) upd.headline = parsed.headline
 
-    // Update profile with parsed data
-    if (parsedData.profile) {
-      const profileUpdate: any = {};
-      
-      if (parsedData.profile.firstName) profileUpdate.firstName = parsedData.profile.firstName;
-      if (parsedData.profile.lastName) profileUpdate.lastName = parsedData.profile.lastName;
-      if (parsedData.profile.phone) profileUpdate.phone = parsedData.profile.phone;
-      if (parsedData.profile.location) profileUpdate.location = parsedData.profile.location;
-      if (parsedData.profile.bio) profileUpdate.bio = parsedData.profile.bio;
-      if (parsedData.profile.headline) profileUpdate.headline = parsedData.profile.headline;
-      if (parsedData.profile.website) profileUpdate.website = parsedData.profile.website;
-      if (parsedData.profile.linkedinUrl) profileUpdate.linkedinUrl = parsedData.profile.linkedinUrl;
-      if (parsedData.profile.githubUrl) profileUpdate.githubUrl = parsedData.profile.githubUrl;
-      if (parsedData.profile.twitterUrl) profileUpdate.twitterUrl = parsedData.profile.twitterUrl;
-      if (parsedData.profile.languages?.length > 0) profileUpdate.languages = parsedData.profile.languages;
+      await adminSupabase.from("profiles").update(upd).eq("id", profile.id)
 
-      if (Object.keys(profileUpdate).length > 0) {
+      // Skills
+      if (parsed.skills.length > 0) {
+        await adminSupabase.from("skills").delete().eq("profileId", profile.id)
         await adminSupabase
-          .from("profiles")
-          .update({ ...profileUpdate, updatedAt: new Date().toISOString() })
-          .eq("id", profileId);
+          .from("skills")
+          .insert(parsed.skills.map((name) => ({ profileId: profile!.id, name })))
+      }
+
+      // Experiences
+      if (parsed.experiences.length > 0) {
+        await adminSupabase.from("experiences").delete().eq("profileId", profile.id)
+        await adminSupabase
+          .from("experiences")
+          .insert(parsed.experiences.map((e) => ({ profileId: profile!.id, ...e })))
+      }
+
+      // Educations
+      if (parsed.educations.length > 0) {
+        await adminSupabase.from("educations").delete().eq("profileId", profile.id)
+        await adminSupabase
+          .from("educations")
+          .insert(parsed.educations.map((e) => ({ profileId: profile!.id, ...e })))
       }
     }
 
-    // Insert skills
-    if (parsedData.skills?.length > 0) {
-      // Delete existing skills first
-      await adminSupabase.from("skills").delete().eq("profileId", profileId);
-      
-      // Insert new skills
-      const skillsToInsert = parsedData.skills.map(skill => ({
-        profileId,
-        name: skill.name,
-        level: skill.level,
-        category: skill.category,
-      }));
-      
-      await adminSupabase.from("skills").insert(skillsToInsert);
-    }
-
-    // Insert experiences
-    if (parsedData.experiences?.length > 0) {
-      // Delete existing experiences first
-      await adminSupabase.from("experiences").delete().eq("profileId", profileId);
-      
-      // Insert new experiences
-      const experiencesToInsert = parsedData.experiences.map(exp => ({
-        profileId,
-        title: exp.title,
-        company: exp.company,
-        location: exp.location,
-        startDate: exp.startDate,
-        endDate: exp.endDate,
-        isCurrent: exp.isCurrent,
-        description: exp.description,
-      }));
-      
-      await adminSupabase.from("experiences").insert(experiencesToInsert);
-    }
-
-    // Insert educations
-    if (parsedData.educations?.length > 0) {
-      // Delete existing educations first
-      await adminSupabase.from("educations").delete().eq("profileId", profileId);
-      
-      // Insert new educations
-      const educationsToInsert = parsedData.educations.map(edu => ({
-        profileId,
-        institution: edu.institution,
-        degree: edu.degree,
-        field: edu.field,
-        startDate: edu.startDate,
-        endDate: edu.endDate,
-        isCurrent: edu.isCurrent,
-        description: edu.description,
-      }));
-      
-      await adminSupabase.from("educations").insert(educationsToInsert);
-    }
-
-    // Insert certifications
-    if (parsedData.certifications?.length > 0) {
-      // Delete existing certifications first
-      await adminSupabase.from("certifications").delete().eq("profileId", profileId);
-      
-      // Insert new certifications
-      const certificationsToInsert = parsedData.certifications.map(cert => ({
-        profileId,
-        name: cert.name,
-        issuer: cert.issuer,
-        issueDate: cert.issueDate,
-        expiryDate: cert.expiryDate,
-        credentialUrl: cert.credentialUrl,
-      }));
-      
-      await adminSupabase.from("certifications").insert(certificationsToInsert);
-    }
-
-    // Insert projects
-    if (parsedData.projects?.length > 0) {
-      // Delete existing projects first
-      await adminSupabase.from("projects").delete().eq("profileId", profileId);
-      
-      // Insert new projects
-      const projectsToInsert = parsedData.projects.map(proj => ({
-        profileId,
-        name: proj.name,
-        description: proj.description,
-        url: proj.url,
-        startDate: proj.startDate,
-        endDate: proj.endDate,
-        isCurrent: proj.isCurrent,
-      }));
-      
-      await adminSupabase.from("projects").insert(projectsToInsert);
-    }
-
-    // Update resume with parsed data
-    await adminSupabase
-      .from("resumes")
-      .update({ parsedData: rawAffindaData })
-      .eq("id", safeResumeId)
-      .eq("userId", user.id);
-
-    // Update profile completion score
-    const { updateCompletionScore } = await import("@/lib/actions/profile.action");
-    await updateCompletionScore();
-
-    return { 
-      data: {
-        parsedData,
-        message: "Resume parsed and profile updated successfully"
-      }, 
-      error: null 
-    };
-  } catch (err) {
-    console.error("Error parsing and saving resume:", err);
-    return { data: null, error: "Failed to parse and save resume data" };
+    return { data: { resume, parsed }, error: null }
+  } catch (err: any) {
+    console.error("Resume parse error:", err)
+    return { data: null, error: err.message || "Failed to parse resume" }
   }
+}
+
+export async function getActiveResume() {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { data: null, error: "Not authenticated" }
+
+  const { data, error } = await adminSupabase
+    .from("resumes")
+    .select("*")
+    .eq("userId", user.id)
+    .eq("isActive", true)
+    .order("createdAt", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  return { data, error: error?.message ?? null }
+}
+
+export async function listResumes() {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { data: null, error: "Not authenticated" }
+
+  const { data, error } = await adminSupabase
+    .from("resumes")
+    .select("*")
+    .eq("userId", user.id)
+    .order("createdAt", { ascending: false })
+
+  return { data: data ?? [], error: error?.message ?? null }
 }

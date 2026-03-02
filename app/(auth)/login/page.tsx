@@ -1,174 +1,107 @@
 "use client"
-import { GoogleSignInButton } from "@/components/auth/social-buttons";
-// ---------- app/(auth)/login/page.tsx ----------
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { toast } from "@/components/ui/use-toast";
-import { login } from "@/lib/auth";
-import Image from "next/image";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { toast } from "@/components/ui/use-toast"
+import { login } from "@/lib/auth"
+import { Loader2 } from "lucide-react"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { useState } from "react"
 
 export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const router = useRouter();
+  const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
+    e.preventDefault()
+    setIsLoading(true)
 
     try {
-      const { data, error } = await login(email, password);
+      const { data, error } = await login(email, password)
 
       if (error) {
-        throw new Error(error);
+        throw new Error(error)
       }
 
       if (data?.session) {
         toast({
-          title: "Login successful!",
-          description: "Welcome back to JobPilot",
-        });
-
-        router.refresh();
-        router.push('/dashboard');
+          title: "Welcome back!",
+          description: "Redirecting to your dashboard...",
+        })
+        router.refresh()
+        router.push("/dashboard")
       }
-
     } catch (error: any) {
-      console.error('Login error:', error);
       toast({
         title: "Login failed",
-        description: error.message || "An error occurred during login",
+        description: error.message || "Invalid email or password",
         variant: "destructive",
-      });
+      })
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  };
+  }
 
   return (
-  <div className="relative min-h-screen w-full flex items-center justify-center overflow-hidden">
-
-    {/* Background Image */}
-    <Image
-      src="/image-1.jpg"
-      alt="Login background"
-      fill
-      priority
-      className="object-cover object-center opacity-80"
-    />
-
-    {/* Overlay */}
-    <div className="absolute inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm" />
-
-    {/* Centered Card */}
-    <div className="relative z-10 flex w-full justify-center px-4">
-      <Card className="w-full max-w-md bg-white/90 dark:bg-slate-900/80 shadow-2xl backdrop-blur-xl border border-white/20">
-
-        <CardHeader className="text-center space-y-2">
-          <div className="text-4xl font-extrabold bg-gradient-to-r from-blue-500 to-cyan-400 bg-clip-text text-transparent">
-            <Link href="/">JobPilot</Link>
-          </div>
-          <CardTitle className="text-2xl font-semibold">
-            Welcome back
-          </CardTitle>
-          <CardDescription>
-            Sign in to your JobPilot account
-          </CardDescription>
+    <div className="flex min-h-screen items-center justify-center bg-muted/40 px-4">
+      <Card className="w-full max-w-md">
+        <CardHeader className="text-center">
+          <Link href="/" className="mx-auto mb-2 text-3xl font-bold text-primary">
+            JobPilot
+          </Link>
+          <CardTitle className="text-2xl">Welcome back</CardTitle>
+          <CardDescription>Sign in to your account</CardDescription>
         </CardHeader>
-
         <CardContent>
           <form className="grid gap-4" onSubmit={handleSubmit}>
-
-            {/* Email */}
             <div className="grid gap-2">
               <Label htmlFor="email">Email</Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="Enter your email"
+                placeholder="you@example.com"
                 required
                 disabled={isLoading}
+                value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
             </div>
-
-            {/* Password */}
             <div className="grid gap-2">
               <Label htmlFor="password">Password</Label>
               <Input
                 id="password"
                 type="password"
-                placeholder="Enter your password"
+                placeholder="Your password"
                 required
                 disabled={isLoading}
+                value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
-
-            {/* Divider */}
-            <div className="relative my-4">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t border-muted-foreground/30" />
-              </div>
-              <div className="relative flex justify-center text-xs">
-                <span className="px-2 bg-white/90 dark:bg-slate-900/80 text-muted-foreground">
-                  Or continue with
-                </span>
-              </div>
-            </div>
-
-            {/* Google Sign In Button */}
-            <GoogleSignInButton type="signin" />
-
-            {/* Login button */}
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? (
-                <div className="flex items-center justify-center">
-                  <svg
-                    className="animate-spin -ml-1 mr-3 h-5 w-5"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 ..."
-                    />
-                  </svg>
-                  Logging in...
-                </div>
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Signing in...
+                </>
               ) : (
-                "Login"
+                "Sign in"
               )}
             </Button>
           </form>
-
-          <div className="mt-6 text-center text-sm text-muted-foreground">
-            Don't have an account?{" "}
-            <Link href="/signup" className="text-primary font-medium hover:underline">
+          <p className="mt-6 text-center text-sm text-muted-foreground">
+            {"Don't have an account? "}
+            <Link href="/signup" className="font-medium text-primary hover:underline">
               Create one
             </Link>
-          </div>
+          </p>
         </CardContent>
-
       </Card>
     </div>
-  </div>
-);
-
+  )
 }
