@@ -1,12 +1,13 @@
 // lib/supabase/server.ts
 
-import { createServerClient, type CookieOptions } from '@supabase/ssr'
+import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { createClient as createJSClient } from '@supabase/supabase-js'
 
 /**
  * Authenticated Server Client (uses cookies)
  * For user-based authenticated queries in Server Components / API Routes.
+ * Always create a new client per request -- do NOT store in a global variable.
  */
 export async function createClient() {
   const cookieStore = await cookies()
@@ -16,21 +17,17 @@ export async function createClient() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value
+        getAll() {
+          return cookieStore.getAll()
         },
-        set(name: string, value: string, options: CookieOptions) {
+        setAll(cookiesToSet) {
           try {
-            cookieStore.set({ name, value, ...options })
-          } catch (_) {
-            // Server Components cannot set cookies
-          }
-        },
-        remove(name: string, options: CookieOptions) {
-          try {
-            cookieStore.set({ name, value: '', ...options })
-          } catch (_) {
-            // Server Components cannot remove cookies
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options),
+            )
+          } catch {
+            // The "setAll" method was called from a Server Component.
+            // This can be ignored if you have middleware refreshing user sessions.
           }
         },
       },
@@ -54,11 +51,3 @@ export const adminSupabase = createJSClient(
     },
   }
 )
-
-/**
- * If you prefer a factory function instead of direct export:
- *
- * export async function createAdminClient() {
- *   return adminSupabase
- * }
- */

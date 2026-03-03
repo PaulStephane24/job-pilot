@@ -1,7 +1,7 @@
 // lib/auth/index.ts
 'use server'
 
-import { createServerClient, type CookieOptions } from '@supabase/ssr'
+import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { adminSupabase } from '@/lib/supabase/server'
 
@@ -12,14 +12,17 @@ async function createAuthClient() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value
+        getAll() {
+          return cookieStore.getAll()
         },
-        set(name: string, value: string, options: CookieOptions) {
-          cookieStore.set({ name, value, ...options })
-        },
-        remove(name: string, options: CookieOptions) {
-          cookieStore.delete(name)
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options),
+            )
+          } catch {
+            // Server Components cannot set cookies
+          }
         },
       },
     }
@@ -108,5 +111,23 @@ export const getCurrentUser = async () => {
     return { user, error: null }
   } catch (error: any) {
     return { user: null, error: error.message || 'Failed to get user' }
+  }
+}
+
+export const signInWithGoogle = async () => {
+  try {
+    const supabase = await createAuthClient()
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'}/api/auth/callback`,
+      },
+    })
+    if (error) {
+      return { success: false, error: error.message, url: null }
+    }
+    return { success: true, error: null, url: data.url }
+  } catch (error: any) {
+    return { success: false, error: error.message || 'Failed to sign in with Google', url: null }
   }
 }
