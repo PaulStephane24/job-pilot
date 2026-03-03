@@ -18,14 +18,19 @@ DO $$ BEGIN
   CREATE TYPE "ApplicationStatus" AS ENUM ('WISHLIST', 'APPLIED', 'INTERVIEWING', 'OFFERED', 'REJECTED', 'ACCEPTED', 'WITHDRAWN');
 EXCEPTION WHEN duplicate_object THEN null; END $$;
 
--- USERS
+-- USERS (references auth.users)
 CREATE TABLE IF NOT EXISTS "users" (
-  "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  "id" UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   "email" TEXT NOT NULL UNIQUE,
   "role" "UserRole" NOT NULL DEFAULT 'USER',
   "createdAt" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW(),
   "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE "users" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "users_select_own" ON "users" FOR SELECT USING (auth.uid() = id);
+CREATE POLICY "users_insert_own" ON "users" FOR INSERT WITH CHECK (auth.uid() = id);
+CREATE POLICY "users_update_own" ON "users" FOR UPDATE USING (auth.uid() = id);
 
 -- PROFILES
 CREATE TABLE IF NOT EXISTS "profiles" (
@@ -50,6 +55,12 @@ CREATE TABLE IF NOT EXISTS "profiles" (
   "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE "profiles" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "profiles_select_own" ON "profiles" FOR SELECT USING (auth.uid() = "userId");
+CREATE POLICY "profiles_insert_own" ON "profiles" FOR INSERT WITH CHECK (auth.uid() = "userId");
+CREATE POLICY "profiles_update_own" ON "profiles" FOR UPDATE USING (auth.uid() = "userId");
+CREATE POLICY "profiles_delete_own" ON "profiles" FOR DELETE USING (auth.uid() = "userId");
+
 -- RESUMES
 CREATE TABLE IF NOT EXISTS "resumes" (
   "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -64,6 +75,12 @@ CREATE TABLE IF NOT EXISTS "resumes" (
   "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE "resumes" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "resumes_select_own" ON "resumes" FOR SELECT USING (auth.uid() = "userId");
+CREATE POLICY "resumes_insert_own" ON "resumes" FOR INSERT WITH CHECK (auth.uid() = "userId");
+CREATE POLICY "resumes_update_own" ON "resumes" FOR UPDATE USING (auth.uid() = "userId");
+CREATE POLICY "resumes_delete_own" ON "resumes" FOR DELETE USING (auth.uid() = "userId");
+
 -- SKILLS
 CREATE TABLE IF NOT EXISTS "skills" (
   "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -74,6 +91,16 @@ CREATE TABLE IF NOT EXISTS "skills" (
   "createdAt" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW(),
   "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE "skills" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "skills_select_own" ON "skills" FOR SELECT
+  USING (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "skills"."profileId" AND "profiles"."userId" = auth.uid()));
+CREATE POLICY "skills_insert_own" ON "skills" FOR INSERT
+  WITH CHECK (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "skills"."profileId" AND "profiles"."userId" = auth.uid()));
+CREATE POLICY "skills_update_own" ON "skills" FOR UPDATE
+  USING (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "skills"."profileId" AND "profiles"."userId" = auth.uid()));
+CREATE POLICY "skills_delete_own" ON "skills" FOR DELETE
+  USING (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "skills"."profileId" AND "profiles"."userId" = auth.uid()));
 
 -- EXPERIENCES
 CREATE TABLE IF NOT EXISTS "experiences" (
@@ -90,6 +117,16 @@ CREATE TABLE IF NOT EXISTS "experiences" (
   "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE "experiences" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "experiences_select_own" ON "experiences" FOR SELECT
+  USING (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "experiences"."profileId" AND "profiles"."userId" = auth.uid()));
+CREATE POLICY "experiences_insert_own" ON "experiences" FOR INSERT
+  WITH CHECK (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "experiences"."profileId" AND "profiles"."userId" = auth.uid()));
+CREATE POLICY "experiences_update_own" ON "experiences" FOR UPDATE
+  USING (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "experiences"."profileId" AND "profiles"."userId" = auth.uid()));
+CREATE POLICY "experiences_delete_own" ON "experiences" FOR DELETE
+  USING (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "experiences"."profileId" AND "profiles"."userId" = auth.uid()));
+
 -- EDUCATIONS
 CREATE TABLE IF NOT EXISTS "educations" (
   "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -105,6 +142,16 @@ CREATE TABLE IF NOT EXISTS "educations" (
   "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE "educations" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "educations_select_own" ON "educations" FOR SELECT
+  USING (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "educations"."profileId" AND "profiles"."userId" = auth.uid()));
+CREATE POLICY "educations_insert_own" ON "educations" FOR INSERT
+  WITH CHECK (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "educations"."profileId" AND "profiles"."userId" = auth.uid()));
+CREATE POLICY "educations_update_own" ON "educations" FOR UPDATE
+  USING (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "educations"."profileId" AND "profiles"."userId" = auth.uid()));
+CREATE POLICY "educations_delete_own" ON "educations" FOR DELETE
+  USING (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "educations"."profileId" AND "profiles"."userId" = auth.uid()));
+
 -- CERTIFICATIONS
 CREATE TABLE IF NOT EXISTS "certifications" (
   "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -119,6 +166,16 @@ CREATE TABLE IF NOT EXISTS "certifications" (
   "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE "certifications" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "certifications_select_own" ON "certifications" FOR SELECT
+  USING (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "certifications"."profileId" AND "profiles"."userId" = auth.uid()));
+CREATE POLICY "certifications_insert_own" ON "certifications" FOR INSERT
+  WITH CHECK (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "certifications"."profileId" AND "profiles"."userId" = auth.uid()));
+CREATE POLICY "certifications_update_own" ON "certifications" FOR UPDATE
+  USING (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "certifications"."profileId" AND "profiles"."userId" = auth.uid()));
+CREATE POLICY "certifications_delete_own" ON "certifications" FOR DELETE
+  USING (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "certifications"."profileId" AND "profiles"."userId" = auth.uid()));
+
 -- PROJECTS
 CREATE TABLE IF NOT EXISTS "projects" (
   "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -132,6 +189,16 @@ CREATE TABLE IF NOT EXISTS "projects" (
   "createdAt" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW(),
   "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE "projects" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "projects_select_own" ON "projects" FOR SELECT
+  USING (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "projects"."profileId" AND "profiles"."userId" = auth.uid()));
+CREATE POLICY "projects_insert_own" ON "projects" FOR INSERT
+  WITH CHECK (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "projects"."profileId" AND "profiles"."userId" = auth.uid()));
+CREATE POLICY "projects_update_own" ON "projects" FOR UPDATE
+  USING (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "projects"."profileId" AND "profiles"."userId" = auth.uid()));
+CREATE POLICY "projects_delete_own" ON "projects" FOR DELETE
+  USING (EXISTS (SELECT 1 FROM "profiles" WHERE "profiles"."id" = "projects"."profileId" AND "profiles"."userId" = auth.uid()));
 
 -- JOB APPLICATIONS
 CREATE TABLE IF NOT EXISTS "job_applications" (
@@ -169,6 +236,12 @@ CREATE INDEX IF NOT EXISTS "job_applications_userId_idx" ON "job_applications"("
 CREATE INDEX IF NOT EXISTS "job_applications_status_idx" ON "job_applications"("status");
 CREATE INDEX IF NOT EXISTS "job_applications_userId_status_idx" ON "job_applications"("userId", "status");
 
+ALTER TABLE "job_applications" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "job_applications_select_own" ON "job_applications" FOR SELECT USING (auth.uid() = "userId");
+CREATE POLICY "job_applications_insert_own" ON "job_applications" FOR INSERT WITH CHECK (auth.uid() = "userId");
+CREATE POLICY "job_applications_update_own" ON "job_applications" FOR UPDATE USING (auth.uid() = "userId");
+CREATE POLICY "job_applications_delete_own" ON "job_applications" FOR DELETE USING (auth.uid() = "userId");
+
 -- JOB SEARCH PREFERENCES
 CREATE TABLE IF NOT EXISTS "job_search_preferences" (
   "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -190,11 +263,17 @@ CREATE TABLE IF NOT EXISTS "job_search_preferences" (
   "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE "job_search_preferences" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "job_search_preferences_select_own" ON "job_search_preferences" FOR SELECT USING (auth.uid() = "userId");
+CREATE POLICY "job_search_preferences_insert_own" ON "job_search_preferences" FOR INSERT WITH CHECK (auth.uid() = "userId");
+CREATE POLICY "job_search_preferences_update_own" ON "job_search_preferences" FOR UPDATE USING (auth.uid() = "userId");
+CREATE POLICY "job_search_preferences_delete_own" ON "job_search_preferences" FOR DELETE USING (auth.uid() = "userId");
+
 -- COVER LETTERS
 CREATE TABLE IF NOT EXISTS "cover_letters" (
   "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   "userId" UUID NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
-  "jobApplicationId" TEXT,
+  "jobApplicationId" UUID REFERENCES "job_applications"("id") ON DELETE SET NULL,
   "content" TEXT NOT NULL,
   "subject" TEXT,
   "aiModel" TEXT,
@@ -208,3 +287,40 @@ CREATE TABLE IF NOT EXISTS "cover_letters" (
 
 CREATE INDEX IF NOT EXISTS "cover_letters_userId_idx" ON "cover_letters"("userId");
 CREATE INDEX IF NOT EXISTS "cover_letters_jobApplicationId_idx" ON "cover_letters"("jobApplicationId");
+
+ALTER TABLE "cover_letters" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "cover_letters_select_own" ON "cover_letters" FOR SELECT USING (auth.uid() = "userId");
+CREATE POLICY "cover_letters_insert_own" ON "cover_letters" FOR INSERT WITH CHECK (auth.uid() = "userId");
+CREATE POLICY "cover_letters_update_own" ON "cover_letters" FOR UPDATE USING (auth.uid() = "userId");
+CREATE POLICY "cover_letters_delete_own" ON "cover_letters" FOR DELETE USING (auth.uid() = "userId");
+
+-- AUTO-CREATE USER + PROFILE ON AUTH SIGNUP
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.users (id, email, role)
+  VALUES (NEW.id, NEW.email, 'USER')
+  ON CONFLICT (id) DO NOTHING;
+
+  INSERT INTO public.profiles ("userId", "firstName", "lastName")
+  VALUES (
+    NEW.id,
+    COALESCE(NEW.raw_user_meta_data ->> 'first_name', NULL),
+    COALESCE(NEW.raw_user_meta_data ->> 'last_name', NULL)
+  )
+  ON CONFLICT ("userId") DO NOTHING;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_new_user();
