@@ -1,378 +1,815 @@
 "use client"
 
-import React, { useState } from 'react';
-import { Sparkles, FileText, Briefcase, Building, MapPin, Send, Copy, Download, RefreshCw, Eye, Edit2, Save, Wand2, Zap, TrendingUp, Target, Clock, CheckCircle, AlertCircle } from 'lucide-react';
+import { useState, useEffect, use } from "react"
+import { useRouter } from "next/navigation"
+import {
+  Sparkles,
+  FileText,
+  Briefcase,
+  Building,
+  Copy,
+  Download,
+  RefreshCw,
+  Edit2,
+  Save,
+  Wand2,
+  Zap,
+  TrendingUp,
+  Target,
+  Clock,
+  CheckCircle,
+  AlertCircle,
+  Loader2,
+  ArrowLeft,
+  ChevronDown,
+  Check,
+} from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
+import { Badge } from "@/components/ui/badge"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  generateCoverLetter,
+  improveCoverLetter,
+  updateCoverLetter,
+  getCoverLettersForJob,
+  getCoverLetterTemplates,
+  type CoverLetterTemplateData,
+} from "@/lib/actions/cover-letter.action"
+import { getJobApplication } from "@/lib/actions/job-application.action"
+import { toast } from "@/components/ui/use-toast"
 
-export default function CoverLetterPage() {
-  const [step, setStep] = useState(1);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generatedLetter, setGeneratedLetter] = useState('');
-  const [isEditing, setIsEditing] = useState(false);
+type Tone = "professional" | "friendly" | "formal" | "enthusiastic"
 
-  // Form data
-  const [formData, setFormData] = useState({
-    jobTitle: '',
-    company: '',
-    jobDescription: '',
-    location: '',
-    tone: 'professional',
-    length: 'medium',
-  });
+interface CoverLetterData {
+  id: string | null
+  content: string
+  subject: string
+  tone: string
+  createdAt: string
+}
 
-  const [savedLetters, setSavedLetters] = useState([
-    {
-      id: 1,
-      jobTitle: 'Senior Frontend Developer',
-      company: 'Stripe',
-      createdAt: '2024-01-10',
-      status: 'used',
-      preview: 'Dear Hiring Manager, I am writing to express my strong interest in the Senior Frontend Developer position at Stripe...',
-    },
-    {
-      id: 2,
-      jobTitle: 'React Engineer',
-      company: 'Vercel',
-      createdAt: '2024-01-08',
-      status: 'draft',
-      preview: 'Dear Vercel Team, With 5 years of experience in React development and a passion for creating...',
-    },
-  ]);
+const toneOptions: { value: Tone; label: string; desc: string }[] = [
+  { value: "professional", label: "Professional", desc: "Formal and polished" },
+  { value: "enthusiastic", label: "Enthusiastic", desc: "Energetic and passionate" },
+  { value: "formal", label: "Formal", desc: "Traditional business tone" },
+  { value: "friendly", label: "Friendly", desc: "Warm and approachable" },
+]
 
-  const tones = [
-    { value: 'professional', label: 'Professional', icon: '👔', desc: 'Formal and polished' },
-    { value: 'enthusiastic', label: 'Enthusiastic', icon: '🎉', desc: 'Energetic and passionate' },
-    { value: 'confident', label: 'Confident', icon: '💪', desc: 'Bold and assertive' },
-    { value: 'friendly', label: 'Friendly', icon: '😊', desc: 'Warm and approachable' },
-  ];
+export default function CoverLetterGeneratorPage({
+  params,
+}: {
+  params: Promise<{ jobId: string }>
+}) {
+  const { jobId } = use(params)
+  const router = useRouter()
 
-  const lengths = [
-    { value: 'short', label: 'Short', desc: '250-300 words' },
-    { value: 'medium', label: 'Medium', desc: '350-400 words' },
-    { value: 'long', label: 'Long', desc: '450-500 words' },
-  ];
+  // Job application data
+  const [jobApp, setJobApp] = useState<{
+    id: string
+    jobTitle: string
+    company: string
+    description?: string
+    status: string
+  } | null>(null)
+  const [isLoadingJob, setIsLoadingJob] = useState(true)
+  const [jobError, setJobError] = useState<string | null>(null)
+
+  // Generation state
+  const [step, setStep] = useState<"configure" | "result">("configure")
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [tone, setTone] = useState<Tone>("professional")
+  const [customInstructions, setCustomInstructions] = useState("")
+  const [showAdvanced, setShowAdvanced] = useState(false)
+
+  // Templates
+  const [templates, setTemplates] = useState<CoverLetterTemplateData[]>([])
+  const [selectedTemplateId, setSelectedTemplateId] = useState("__default")
+
+  // Generated letter
+  const [coverLetter, setCoverLetter] = useState<CoverLetterData | null>(null)
+  const [editedContent, setEditedContent] = useState("")
+  const [editedSubject, setEditedSubject] = useState("")
+  const [isEditing, setIsEditing] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  // Previous letters
+  const [previousLetters, setPreviousLetters] = useState<CoverLetterData[]>([])
+
+  // AI improve
+  const [showImproveInput, setShowImproveInput] = useState(false)
+  const [improveFeedback, setImproveFeedback] = useState("")
+  const [isImproving, setIsImproving] = useState(false)
+
+  // Load job application and templates on mount
+  useEffect(() => {
+    async function loadData() {
+      setIsLoadingJob(true)
+      try {
+        const [jobResult, templatesResult, lettersResult] = await Promise.all([
+          getJobApplication(jobId),
+          getCoverLetterTemplates(),
+          getCoverLettersForJob(jobId),
+        ])
+
+        if (jobResult.error || !jobResult.data) {
+          setJobError(jobResult.error || "Job application not found")
+          return
+        }
+
+        setJobApp({
+          id: jobResult.data.id,
+          jobTitle: jobResult.data.jobTitle,
+          company: jobResult.data.company,
+          description: jobResult.data.description,
+          status: jobResult.data.status,
+        })
+
+        if (templatesResult.data) {
+          setTemplates(templatesResult.data)
+        }
+
+        if (lettersResult.data && lettersResult.data.length > 0) {
+          const mapped = lettersResult.data.map((l: any) => ({
+            id: l.id,
+            content: l.content,
+            subject: l.subject || "",
+            tone: l.tone || "professional",
+            createdAt: l.createdAt,
+          }))
+          setPreviousLetters(mapped)
+        }
+      } catch (err) {
+        setJobError("Failed to load job application")
+      } finally {
+        setIsLoadingJob(false)
+      }
+    }
+
+    loadData()
+  }, [jobId])
 
   const handleGenerate = async () => {
-    setIsGenerating(true);
-    
-    // Simulate AI generation
-    setTimeout(() => {
-      const letter = `Dear Hiring Manager,
+    if (!jobApp) return
 
-I am writing to express my strong interest in the ${formData.jobTitle} position at ${formData.company}. With my extensive experience in software development and a proven track record of delivering high-quality solutions, I am confident that I would be a valuable addition to your team.
+    setIsGenerating(true)
+    try {
+      const result = await generateCoverLetter({
+        jobApplicationId: jobApp.id,
+        tone,
+        customInstructions: customInstructions || undefined,
+        templateId:
+          selectedTemplateId === "__default" ? undefined : selectedTemplateId,
+      })
 
-Throughout my career, I have developed expertise in modern web technologies, particularly in React, TypeScript, and Next.js. My experience aligns perfectly with the requirements outlined in your job posting, and I am excited about the opportunity to contribute to ${formData.company}'s mission.
+      if (result.data) {
+        const newLetter: CoverLetterData = {
+          id: result.data.id || null,
+          content: result.data.content,
+          subject:
+            result.data.subject || `Application for ${jobApp.jobTitle}`,
+          tone,
+          createdAt: new Date().toISOString(),
+        }
+        setCoverLetter(newLetter)
+        setEditedContent(newLetter.content)
+        setEditedSubject(newLetter.subject)
+        setStep("result")
 
-In my current role, I have successfully led multiple projects that resulted in significant improvements in performance and user experience. I am particularly drawn to ${formData.company} because of your commitment to innovation and your reputation for technical excellence. The challenges described in the job posting resonate with my professional goals, and I am eager to bring my skills to your talented team.
+        toast({
+          title: "Cover Letter Generated",
+          description:
+            "Your AI cover letter is ready. Review and edit as needed.",
+        })
+      } else {
+        toast({
+          title: "Generation Failed",
+          description: result.error || "Failed to generate cover letter",
+          variant: "destructive",
+        })
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred",
+        variant: "destructive",
+      })
+    } finally {
+      setIsGenerating(false)
+    }
+  }
 
-I am impressed by ${formData.company}'s recent achievements and would welcome the opportunity to discuss how my background, skills, and enthusiasm can contribute to your continued success. Thank you for considering my application. I look forward to the possibility of discussing this exciting opportunity with you.
+  const handleImprove = async () => {
+    if (!coverLetter?.id || !improveFeedback.trim()) return
 
-Best regards,
-[Your Name]`;
+    setIsImproving(true)
+    try {
+      const result = await improveCoverLetter({
+        coverLetterId: coverLetter.id,
+        feedback: improveFeedback,
+      })
 
-      setGeneratedLetter(letter);
-      setIsGenerating(false);
-      setStep(2);
-    }, 3000);
-  };
+      if (result.data) {
+        setEditedContent(result.data.content)
+        setCoverLetter({ ...coverLetter, content: result.data.content })
+        setImproveFeedback("")
+        setShowImproveInput(false)
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(generatedLetter);
-    alert('Cover letter copied to clipboard!');
-  };
+        toast({
+          title: "Cover Letter Improved",
+          description: "The AI has updated your cover letter based on your feedback.",
+        })
+      } else {
+        toast({
+          title: "Improvement Failed",
+          description: result.error || "Failed to improve cover letter",
+          variant: "destructive",
+        })
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to improve cover letter",
+        variant: "destructive",
+      })
+    } finally {
+      setIsImproving(false)
+    }
+  }
+
+  const handleSave = async () => {
+    if (!coverLetter?.id) return
+
+    setIsSaving(true)
+    try {
+      const result = await updateCoverLetter(coverLetter.id, {
+        content: editedContent,
+        subject: editedSubject,
+      })
+
+      if (result.data) {
+        setCoverLetter({
+          ...coverLetter,
+          content: editedContent,
+          subject: editedSubject,
+        })
+        setIsEditing(false)
+        toast({
+          title: "Saved",
+          description: "Cover letter updated successfully",
+        })
+      } else {
+        toast({
+          title: "Error",
+          description: result.error || "Failed to save",
+          variant: "destructive",
+        })
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to save cover letter",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(editedContent)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+      toast({ title: "Copied", description: "Cover letter copied to clipboard" })
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to copy to clipboard",
+        variant: "destructive",
+      })
+    }
+  }
 
   const handleDownload = () => {
-    const element = document.createElement('a');
-    const file = new Blob([generatedLetter], { type: 'text/plain' });
-    element.href = URL.createObjectURL(file);
-    element.download = `cover_letter_${formData.company.replace(/\s+/g, '_')}.txt`;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-  };
+    const blob = new Blob([editedContent], { type: "text/plain" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `cover-letter-${jobApp?.company?.replace(/\s+/g, "_") || "letter"}.txt`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
 
-  const handleSave = () => {
-    const newLetter = {
-      id: savedLetters.length + 1,
-      jobTitle: formData.jobTitle,
-      company: formData.company,
-      createdAt: new Date().toISOString().split('T')[0],
-      status: 'draft',
-      preview: generatedLetter.substring(0, 100) + '...',
-    };
-    setSavedLetters([newLetter, ...savedLetters]);
-    alert('Cover letter saved successfully!');
-  };
+    toast({ title: "Downloaded", description: "Cover letter downloaded successfully" })
+  }
+
+  const handleLoadPrevious = (letter: CoverLetterData) => {
+    setCoverLetter(letter)
+    setEditedContent(letter.content)
+    setEditedSubject(letter.subject)
+    setStep("result")
+  }
 
   const handleRegenerate = () => {
-    setStep(1);
-    setGeneratedLetter('');
-  };
+    setStep("configure")
+    setCoverLetter(null)
+    setEditedContent("")
+    setEditedSubject("")
+    setIsEditing(false)
+    setShowImproveInput(false)
+  }
+
+  const wordCount = editedContent
+    ? editedContent.split(/\s+/).filter(Boolean).length
+    : 0
+
+  const hasChanges =
+    coverLetter &&
+    (editedContent !== coverLetter.content ||
+      editedSubject !== coverLetter.subject)
+
+  // Loading state
+  if (isLoadingJob) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">
+            Loading job application...
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  // Error state
+  if (jobError || !jobApp) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <div className="rounded-full bg-destructive/10 p-4">
+            <AlertCircle className="h-8 w-8 text-destructive" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">
+              Job Application Not Found
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {jobError || "The job application could not be found."}
+            </p>
+          </div>
+          <Button variant="outline" onClick={() => router.push("/dashboard/jobs")}>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Jobs
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
+    <div className="min-h-screen bg-background">
       {/* Header */}
-      <div className="bg-white border-b">
-        <div className="max-w-7xl mx-auto px-6 py-6">
-          <div className="flex items-center justify-between">
+      <div className="border-b border-border bg-card">
+        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-3 bg-primary rounded-xl">
-                <Sparkles className="w-6 h-6 text-white" />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => router.push("/dashboard/letters")}
+                className="shrink-0"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+              <div className="rounded-xl bg-primary/10 p-2.5">
+                <Sparkles className="h-6 w-6 text-primary" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-gray-800">AI Cover Letter Generator</h1>
-                <p className="text-sm text-gray-600">Create personalized cover letters in seconds</p>
+                <h1 className="text-xl font-bold text-foreground sm:text-2xl">
+                  AI Cover Letter Generator
+                </h1>
+                <div className="mt-0.5 flex items-center gap-2 text-sm text-muted-foreground">
+                  <Building className="h-3.5 w-3.5" />
+                  <span>
+                    {jobApp.jobTitle} at {jobApp.company}
+                  </span>
+                  <Badge variant="secondary" className="text-xs">
+                    {jobApp.status}
+                  </Badge>
+                </div>
               </div>
             </div>
-            <button
-              onClick={() => setStep(1)}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2"
-            >
-              <Wand2 className="w-4 h-4" />
-              New Letter
-            </button>
+            {step === "result" && (
+              <Button onClick={handleRegenerate} variant="outline">
+                <Wand2 className="mr-2 h-4 w-4" />
+                New Letter
+              </Button>
+            )}
+          </div>
+
+          {/* Progress Steps */}
+          <div className="mt-6 flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <div
+                className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
+                  step === "configure"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-primary/20 text-primary"
+                }`}
+              >
+                {step === "result" ? (
+                  <Check className="h-4 w-4" />
+                ) : (
+                  "1"
+                )}
+              </div>
+              <span className="text-sm font-medium text-foreground">
+                Configure
+              </span>
+            </div>
+            <div className="h-0.5 flex-1 rounded bg-border">
+              <div
+                className={`h-full rounded bg-primary transition-all duration-500 ${
+                  step === "result" ? "w-full" : "w-0"
+                }`}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <div
+                className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
+                  step === "result"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                2
+              </div>
+              <span
+                className={`text-sm font-medium ${
+                  step === "result"
+                    ? "text-foreground"
+                    : "text-muted-foreground"
+                }`}
+              >
+                Review & Edit
+              </span>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {/* Main Content */}
-          <div className="lg:col-span-2 space-y-6">
-            
-            {/* Progress Steps */}
-            <div className="bg-white rounded-xl shadow-sm p-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className={`flex items-center justify-center w-10 h-10 rounded-full ${step >= 1 ? 'bg-primary text-primary-foreground' : 'bg-gray-200 text-gray-400'}`}>
-                    1
-                  </div>
-                  <div>
-                    <p className="font-semibold text-gray-800">Job Details</p>
-                    <p className="text-xs text-gray-500">Enter job information</p>
-                  </div>
-                </div>
+          <div className="space-y-6 lg:col-span-2">
+            {/* Step 1: Configure */}
+            {step === "configure" && (
+              <div className="rounded-xl border border-border bg-card p-6 shadow-sm sm:p-8">
+                <h2 className="mb-6 text-xl font-bold text-foreground">
+                  Configure Your Cover Letter
+                </h2>
 
-                <div className="flex-1 h-1 mx-4 bg-gray-200 rounded">
-                  <div className={`h-full rounded transition-all duration-500 ${step >= 2 ? 'bg-indigo-600 w-full' : 'w-0'}`}></div>
-                </div>
-
-                <div className="flex items-center gap-4">
-                  <div className={`flex items-center justify-center w-10 h-10 rounded-full ${step >= 2 ? 'bg-primary text-primary-foreground' : 'bg-gray-200 text-gray-400'}`}>
-                    2
-                  </div>
-                  <div>
-                    <p className="font-semibold text-gray-800">Review & Edit</p>
-                    <p className="text-xs text-gray-500">Customize your letter</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Step 1: Form */}
-            {step === 1 && (
-              <div className="bg-white rounded-xl shadow-sm p-8">
-                <h2 className="text-2xl font-bold text-gray-800 mb-6">Tell us about the job</h2>
-                
                 <div className="space-y-6">
-                  {/* Job Title */}
-                  <div>
-                    <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
-                      <Briefcase className="w-4 h-4 text-primary" />
-                      Job Title *
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.jobTitle}
-                      onChange={(e) => setFormData({ ...formData, jobTitle: e.target.value })}
-                      placeholder="e.g., Senior Frontend Developer"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
-                    />
+                  {/* Job Info (read-only) */}
+                  <div className="rounded-lg border border-border bg-muted/50 p-4">
+                    <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                      <Briefcase className="h-4 w-4" />
+                      Job Details (from your application)
+                    </div>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <p className="text-xs text-muted-foreground">
+                          Position
+                        </p>
+                        <p className="font-medium text-foreground">
+                          {jobApp.jobTitle}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">
+                          Company
+                        </p>
+                        <p className="font-medium text-foreground">
+                          {jobApp.company}
+                        </p>
+                      </div>
+                    </div>
+                    {jobApp.description && (
+                      <div className="mt-2">
+                        <p className="text-xs text-muted-foreground">
+                          Description
+                        </p>
+                        <p className="mt-1 line-clamp-3 text-sm text-foreground">
+                          {jobApp.description}
+                        </p>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Company */}
-                  <div>
-                    <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
-                      <Building className="w-4 h-4 text-primary" />
-                      Company Name *
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.company}
-                      onChange={(e) => setFormData({ ...formData, company: e.target.value })}
-                      placeholder="e.g., Stripe"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
-                    />
-                  </div>
-
-                  {/* Location */}
-                  <div>
-                    <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
-                      <MapPin className="w-4 h-4 text-primary" />
-                      Location
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.location}
-                      onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                      placeholder="e.g., San Francisco, CA"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
-                    />
-                  </div>
-
-                  {/* Job Description */}
-                  <div>
-                    <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
-                      <FileText className="w-4 h-4 text-primary" />
-                      Job Description (Optional)
-                    </label>
-                    <textarea
-                      value={formData.jobDescription}
-                      onChange={(e) => setFormData({ ...formData, jobDescription: e.target.value })}
-                      placeholder="Paste the job description here to generate a more tailored cover letter..."
-                      rows={6}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none"
-                    />
+                  {/* Template Selection */}
+                  <div className="space-y-2">
+                    <Label>Template</Label>
+                    <Select
+                      value={selectedTemplateId}
+                      onValueChange={setSelectedTemplateId}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Default (AI structured)" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__default">
+                          Default (AI structured)
+                        </SelectItem>
+                        {templates.map((t) => (
+                          <SelectItem key={t.id} value={t.id}>
+                            {t.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {selectedTemplateId !== "__default" && (
+                      <p className="text-xs text-muted-foreground">
+                        {templates.find((t) => t.id === selectedTemplateId)
+                          ?.description || "Uses the selected template structure."}
+                      </p>
+                    )}
                   </div>
 
                   {/* Tone Selection */}
-                  <div>
-                    <label className="text-sm font-semibold text-gray-700 mb-3 block">
-                      Writing Tone
-                    </label>
+                  <div className="space-y-2">
+                    <Label>Writing Tone</Label>
                     <div className="grid grid-cols-2 gap-3">
-                      {tones.map((tone) => (
+                      {toneOptions.map((option) => (
                         <button
-                          key={tone.value}
-                          onClick={() => setFormData({ ...formData, tone: tone.value })}
-                          className={`p-4 border-2 rounded-lg text-left transition-all ${
-                            formData.tone === tone.value
-                              ? 'border-indigo-600 bg-indigo-50'
-                              : 'border-gray-200 hover:border-gray-300'
+                          key={option.value}
+                          onClick={() => setTone(option.value)}
+                          className={`rounded-lg border-2 p-3 text-left transition-all ${
+                            tone === option.value
+                              ? "border-primary bg-primary/5"
+                              : "border-border hover:border-primary/40"
                           }`}
                         >
-                          <div className="flex items-center gap-3 mb-2">
-                            <span className="text-2xl">{tone.icon}</span>
-                            <span className="font-semibold text-gray-800">{tone.label}</span>
-                          </div>
-                          <p className="text-xs text-gray-600">{tone.desc}</p>
+                          <span className="text-sm font-semibold text-foreground">
+                            {option.label}
+                          </span>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {option.desc}
+                          </p>
                         </button>
                       ))}
                     </div>
                   </div>
 
-                  {/* Length Selection */}
+                  {/* Advanced Options */}
                   <div>
-                    <label className="text-sm font-semibold text-gray-700 mb-3 block">
-                      Letter Length
-                    </label>
-                    <div className="flex gap-3">
-                      {lengths.map((length) => (
-                        <button
-                          key={length.value}
-                          onClick={() => setFormData({ ...formData, length: length.value })}
-                          className={`flex-1 p-4 border-2 rounded-lg transition-all ${
-                            formData.length === length.value
-                              ? 'border-indigo-600 bg-indigo-50'
-                              : 'border-gray-200 hover:border-gray-300'
-                          }`}
-                        >
-                          <p className="font-semibold text-gray-800 mb-1">{length.label}</p>
-                          <p className="text-xs text-gray-600">{length.desc}</p>
-                        </button>
-                      ))}
-                    </div>
+                    <button
+                      onClick={() => setShowAdvanced(!showAdvanced)}
+                      className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+                    >
+                      <ChevronDown
+                        className={`h-4 w-4 transition-transform ${
+                          showAdvanced ? "rotate-180" : ""
+                        }`}
+                      />
+                      Advanced Options
+                    </button>
+                    {showAdvanced && (
+                      <div className="mt-3 space-y-2">
+                        <Label>Custom Instructions (optional)</Label>
+                        <Textarea
+                          value={customInstructions}
+                          onChange={(e) =>
+                            setCustomInstructions(e.target.value)
+                          }
+                          placeholder="E.g., Emphasize my leadership experience, mention I'm relocating, focus on my Python skills..."
+                          rows={3}
+                        />
+                      </div>
+                    )}
                   </div>
 
                   {/* Generate Button */}
-                  <button
+                  <Button
                     onClick={handleGenerate}
-                    disabled={!formData.jobTitle || !formData.company || isGenerating}
-                    className="w-full py-4 bg-primary text-primary-foreground rounded-xl font-semibold hover:bg-primary/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 text-lg shadow-lg hover:shadow-xl"
+                    disabled={isGenerating}
+                    className="h-12 w-full text-base"
+                    size="lg"
                   >
                     {isGenerating ? (
                       <>
-                        <RefreshCw className="w-5 h-5 animate-spin" />
-                        Generating Your Letter...
+                        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                        Generating Your Cover Letter...
                       </>
                     ) : (
                       <>
-                        <Sparkles className="w-5 h-5" />
+                        <Sparkles className="mr-2 h-5 w-5" />
                         Generate Cover Letter
                       </>
                     )}
-                  </button>
+                  </Button>
+
+                  {/* Previous Letters */}
+                  {previousLetters.length > 0 && (
+                    <div className="rounded-lg border border-border bg-muted/30 p-4">
+                      <p className="mb-2 text-sm font-medium text-foreground">
+                        Previous Letters ({previousLetters.length})
+                      </p>
+                      <div className="space-y-2">
+                        {previousLetters.slice(0, 3).map((letter, index) => (
+                          <button
+                            key={letter.id || index}
+                            onClick={() => handleLoadPrevious(letter)}
+                            className="w-full rounded-md border border-border bg-card p-3 text-left transition-colors hover:border-primary/40"
+                          >
+                            <div className="flex items-center justify-between">
+                              <Badge variant="secondary" className="text-xs">
+                                {letter.tone}
+                              </Badge>
+                              <span className="text-xs text-muted-foreground">
+                                {new Date(
+                                  letter.createdAt
+                                ).toLocaleDateString()}
+                              </span>
+                            </div>
+                            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                              {letter.content.substring(0, 120)}...
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
-            {/* Step 2: Generated Letter */}
-            {step === 2 && (
+            {/* Step 2: Result */}
+            {step === "result" && coverLetter && (
               <div className="space-y-6">
                 {/* Action Bar */}
-                <div className="bg-white rounded-xl shadow-sm p-4 flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 shadow-sm">
                   <div className="flex items-center gap-2">
-                    <CheckCircle className="w-5 h-5 text-green-600" />
-                    <span className="font-semibold text-gray-800">Cover Letter Generated!</span>
+                    <CheckCircle className="h-5 w-5 text-green-600" />
+                    <span className="font-semibold text-foreground">
+                      Cover Letter Ready
+                    </span>
+                    <span className="text-sm text-muted-foreground">
+                      {wordCount} words
+                    </span>
                   </div>
                   <div className="flex gap-2">
-                    <button
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => setIsEditing(!isEditing)}
-                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
                     >
-                      {isEditing ? <Save className="w-4 h-4" /> : <Edit2 className="w-4 h-4" />}
-                      {isEditing ? 'Save' : 'Edit'}
-                    </button>
-                    <button
+                      {isEditing ? (
+                        <Save className="mr-2 h-4 w-4" />
+                      ) : (
+                        <Edit2 className="mr-2 h-4 w-4" />
+                      )}
+                      {isEditing ? "Done" : "Edit"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={handleCopy}
-                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
                     >
-                      <Copy className="w-4 h-4" />
-                      Copy
-                    </button>
-                    <button
-                      onClick={handleDownload}
-                      className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2"
-                    >
-                      <Download className="w-4 h-4" />
+                      {copied ? (
+                        <Check className="mr-2 h-4 w-4 text-green-600" />
+                      ) : (
+                        <Copy className="mr-2 h-4 w-4" />
+                      )}
+                      {copied ? "Copied" : "Copy"}
+                    </Button>
+                    <Button size="sm" onClick={handleDownload}>
+                      <Download className="mr-2 h-4 w-4" />
                       Download
-                    </button>
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Subject Line */}
+                <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
+                  <div className="space-y-2">
+                    <Label>Email Subject</Label>
+                    <Input
+                      value={editedSubject}
+                      onChange={(e) => setEditedSubject(e.target.value)}
+                      placeholder="Application for..."
+                      disabled={!isEditing}
+                    />
                   </div>
                 </div>
 
                 {/* Letter Content */}
-                <div className="bg-white rounded-xl shadow-sm p-8">
+                <div className="rounded-xl border border-border bg-card p-6 shadow-sm sm:p-8">
                   {isEditing ? (
-                    <textarea
-                      value={generatedLetter}
-                      onChange={(e) => setGeneratedLetter(e.target.value)}
-                      className="w-full h-[600px] p-6 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none font-serif text-gray-800 leading-relaxed resize-none"
+                    <Textarea
+                      value={editedContent}
+                      onChange={(e) => setEditedContent(e.target.value)}
+                      rows={20}
+                      className="min-h-[500px] resize-none font-serif text-sm leading-relaxed"
                     />
                   ) : (
-                    <div className="prose prose-lg max-w-none">
-                      <div className="font-serif text-gray-800 leading-relaxed whitespace-pre-wrap">
-                        {generatedLetter}
+                    <div className="prose prose-sm max-w-none dark:prose-invert">
+                      <div className="whitespace-pre-wrap font-serif leading-relaxed text-foreground">
+                        {editedContent}
                       </div>
                     </div>
                   )}
                 </div>
 
-                {/* Action Buttons */}
+                {/* AI Improve Section */}
+                {coverLetter.id && (
+                  <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
+                    {!showImproveInput ? (
+                      <Button
+                        variant="outline"
+                        onClick={() => setShowImproveInput(true)}
+                        className="w-full"
+                      >
+                        <Sparkles className="mr-2 h-4 w-4 text-primary" />
+                        Improve with AI
+                      </Button>
+                    ) : (
+                      <div className="space-y-3">
+                        <Label>How should I improve it?</Label>
+                        <Textarea
+                          value={improveFeedback}
+                          onChange={(e) =>
+                            setImproveFeedback(e.target.value)
+                          }
+                          placeholder="E.g., Make it more concise, add more technical details, sound more confident..."
+                          rows={2}
+                        />
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={handleImprove}
+                            disabled={
+                              isImproving || !improveFeedback.trim()
+                            }
+                          >
+                            {isImproving ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <Sparkles className="mr-2 h-4 w-4" />
+                            )}
+                            Improve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setShowImproveInput(false)
+                              setImproveFeedback("")
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Bottom Actions */}
                 <div className="flex gap-4">
-                  <button
+                  <Button
+                    variant="outline"
+                    className="flex-1"
                     onClick={handleRegenerate}
-                    className="flex-1 py-3 border-2 border-gray-300 text-gray-700 rounded-xl font-semibold hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
                   >
-                    <RefreshCw className="w-5 h-5" />
+                    <RefreshCw className="mr-2 h-4 w-4" />
                     Regenerate
-                  </button>
-                  <button
-                    onClick={handleSave}
-                    className="flex-1 py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-semibold hover:from-green-700 hover:to-emerald-700 transition-all flex items-center justify-center gap-2 shadow-lg"
-                  >
-                    <Save className="w-5 h-5" />
-                    Save to Library
-                  </button>
+                  </Button>
+                  {hasChanges && coverLetter.id && (
+                    <Button
+                      className="flex-1"
+                      onClick={handleSave}
+                      disabled={isSaving}
+                    >
+                      {isSaving ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Save className="mr-2 h-4 w-4" />
+                      )}
+                      Save Changes
+                    </Button>
+                  )}
                 </div>
               </div>
             )}
@@ -381,85 +818,125 @@ Best regards,
           {/* Right Sidebar */}
           <div className="space-y-6">
             {/* Tips Card */}
-            <div className="bg-primary rounded-xl shadow-lg p-6 text-primary-foreground">
-              <div className="flex items-center gap-2 mb-4">
-                <Zap className="w-5 h-5" />
-                <h3 className="font-bold text-lg">Pro Tips</h3>
+            <div className="rounded-xl bg-primary p-6 text-primary-foreground shadow-sm">
+              <div className="mb-4 flex items-center gap-2">
+                <Zap className="h-5 w-5" />
+                <h3 className="text-lg font-bold">Pro Tips</h3>
               </div>
               <ul className="space-y-3 text-sm">
                 <li className="flex items-start gap-2">
-                  <Target className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <span>Include specific keywords from the job description</span>
+                  <Target className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    Include specific keywords from the job description
+                  </span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <TrendingUp className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <TrendingUp className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>Highlight your most relevant achievements</span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <Clock className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <Clock className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>Keep it concise - 300-400 words is ideal</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <FileText className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    Use the AI Improve feature to refine your letter
+                  </span>
                 </li>
               </ul>
             </div>
 
             {/* Stats Card */}
-            <div className="bg-white rounded-xl shadow-sm p-6">
-              <h3 className="font-bold text-gray-800 mb-4">Your Stats</h3>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
+            <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
+              <h3 className="mb-4 font-bold text-foreground">
+                Generation Info
+              </h3>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between rounded-lg bg-muted/50 p-3">
                   <div className="flex items-center gap-2">
-                    <FileText className="w-5 h-5 text-blue-600" />
-                    <span className="text-sm font-medium text-gray-700">Letters Created</span>
+                    <Briefcase className="h-4 w-4 text-primary" />
+                    <span className="text-sm text-muted-foreground">
+                      Position
+                    </span>
                   </div>
-                  <span className="font-bold text-blue-600">24</span>
+                  <span className="text-sm font-medium text-foreground">
+                    {jobApp.jobTitle}
+                  </span>
                 </div>
-                <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
+                <div className="flex items-center justify-between rounded-lg bg-muted/50 p-3">
                   <div className="flex items-center gap-2">
-                    <Send className="w-5 h-5 text-green-600" />
-                    <span className="text-sm font-medium text-gray-700">Applications Sent</span>
+                    <Building className="h-4 w-4 text-primary" />
+                    <span className="text-sm text-muted-foreground">
+                      Company
+                    </span>
                   </div>
-                  <span className="font-bold text-green-600">18</span>
+                  <span className="text-sm font-medium text-foreground">
+                    {jobApp.company}
+                  </span>
                 </div>
-                <div className="flex items-center justify-between p-3 bg-purple-50 rounded-lg">
+                <div className="flex items-center justify-between rounded-lg bg-muted/50 p-3">
                   <div className="flex items-center gap-2">
-                    <TrendingUp className="w-5 h-5 text-purple-600" />
-                    <span className="text-sm font-medium text-gray-700">Response Rate</span>
+                    <FileText className="h-4 w-4 text-primary" />
+                    <span className="text-sm text-muted-foreground">
+                      Letters for this job
+                    </span>
                   </div>
-                  <span className="font-bold text-purple-600">33%</span>
+                  <span className="text-sm font-medium text-foreground">
+                    {previousLetters.length}
+                  </span>
                 </div>
+                {coverLetter && (
+                  <div className="flex items-center justify-between rounded-lg bg-muted/50 p-3">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-4 w-4 text-primary" />
+                      <span className="text-sm text-muted-foreground">
+                        Word count
+                      </span>
+                    </div>
+                    <span className="text-sm font-medium text-foreground">
+                      {wordCount}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Saved Letters */}
-            <div className="bg-white rounded-xl shadow-sm p-6">
-              <h3 className="font-bold text-gray-800 mb-4">Recent Letters</h3>
-              <div className="space-y-3">
-                {savedLetters.slice(0, 3).map((letter) => (
-                  <div key={letter.id} className="p-3 border border-gray-200 rounded-lg hover:border-primary/40 transition-colors cursor-pointer">
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex-1">
-                        <p className="font-semibold text-sm text-gray-800">{letter.jobTitle}</p>
-                        <p className="text-xs text-gray-600">{letter.company}</p>
-                      </div>
-                      <span className={`text-xs px-2 py-1 rounded ${
-                        letter.status === 'used' 
-                          ? 'bg-green-100 text-green-700' 
-                          : 'bg-gray-100 text-gray-700'
-                      }`}>
-                        {letter.status}
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-500 line-clamp-2">{letter.preview}</p>
-                  </div>
-                ))}
+            {/* Quick Navigation */}
+            <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
+              <h3 className="mb-4 font-bold text-foreground">
+                Quick Links
+              </h3>
+              <div className="space-y-2">
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start"
+                  onClick={() => router.push("/dashboard/letters")}
+                >
+                  <FileText className="mr-2 h-4 w-4" />
+                  All Cover Letters
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start"
+                  onClick={() => router.push(`/dashboard/jobs/${jobId}`)}
+                >
+                  <Briefcase className="mr-2 h-4 w-4" />
+                  View Job Application
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start"
+                  onClick={() => router.push("/dashboard/jobs")}
+                >
+                  <Building className="mr-2 h-4 w-4" />
+                  All Jobs
+                </Button>
               </div>
-              <button className="w-full mt-4 py-2 text-sm text-primary font-medium hover:bg-indigo-50 rounded-lg transition-colors">
-                View All Letters →
-              </button>
             </div>
           </div>
         </div>
       </div>
     </div>
-  );
+  )
 }
